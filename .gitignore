@@ -1,0 +1,87 @@
+# --- Terraform / OpenTofu -----------------------------------------------------
+# State files can contain secrets and are never committed.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!example.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# --- Kubernetes / Helm --------------------------------------------------------
+*.kubeconfig
+kubeconfig
+.kube/
+# Rendered chart output and local values overrides.
+rendered/
+*.rendered.yaml
+values.local.yaml
+# Local secrets applied to the cluster.
+secrets.yaml
+*-secret.yaml
+!k8s/**/*secret*.example.yaml
+
+# --- Local runtime state ------------------------------------------------------
+.minikube/
+# Relocated MINIKUBE_HOME used when ~/.minikube is not writable (e.g. a
+# restricted file sandbox). Contains multi-GB cluster state and credentials.
+.minikube-home/
+.selfhealing/
+*.log
+logs/
+tmp/
+.tmp/
+
+# --- Python -------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editors / OS -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Environment --------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Floci --------------------------------------------------------------------
+# Local emulator state snapshots. Regenerable; may contain credentials.
+.floci/
+# Two patterns were fused into one here (`floci-snapshot*.json.minikube-home/`),
+# which as a glob matches only a file literally named
+# `floci-snapshot<something>.json.minikube-home` - so it excluded NOTHING, and
+# `floci-snapshot*.json` was not ignored at all. The comment two lines above says
+# these may contain credentials, so a `git add -A` could have committed them
+# (AGENTS.md rule 6). Same defect class as the §14 table: a pattern that restates
+# a fact instead of matching it, failing silently because nothing reports a
+# pattern that matches nothing. Note this is the SECOND time this file's scope
+# drifted - the first was the observability `*.yaml` glob (finding 6).
+floci-snapshot*.json
+.floci-snapshot*.json
+.minikube-home/
+.kube/
+*.log
+.env
+.env.*
+node_modules/
