@@ -1,0 +1,7 @@
+# Runtime dependencies for demo-api.
+#
+# Pinned exactly: this image is the failure-injection target, so a silent
+# upstream change would make timing measurements in docs/design.md
+# unreproducible.
+Flask==3.1.0
+gunicorn==23.0.0
