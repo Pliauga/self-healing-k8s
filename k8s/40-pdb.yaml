@@ -1,0 +1,22 @@
+---
+# PodDisruptionBudget: the guard rail that makes *voluntary* disruption safe.
+#
+# Drain a node, upgrade the cluster, or evict pods, and this budget forces the
+# eviction API to keep at least 2 of the 3 replicas available. Without it, a
+# `kubectl drain` can take every replica down at once - a self-inflicted outage
+# that no amount of probe tuning will catch.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-api
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: self-healing-cluster
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-api
+  unhealthyPodEvictionPolicy: AlwaysAllow

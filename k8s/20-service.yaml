@@ -1,0 +1,32 @@
+---
+# ClusterIP Service fronting the demo-api pods. Selecting on the workload's
+# labels means the endpoint controller automatically drops pods whose
+# readiness probe is failing - the first layer of self-healing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-api
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: self-healing-cluster
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: demo-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  # Session affinity is deliberately left at the default (None) so that each
+  # request is independently load-balanced across ready pods.
+  #
+  # ClientIP affinity was considered and rejected: the load generator in
+  # k8s/optional/agent/load-generator.yaml is a single pod with a single source
+  # IP, so pinning would send 100% of the generated load to one backend replica
+  # and starve the other two. The HPA computes *average* utilisation across
+  # pods, so that concentration would both understate the load signal and make
+  # the scale-out behaviour unrepresentative.
+  sessionAffinity: None
