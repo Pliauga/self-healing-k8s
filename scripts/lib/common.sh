@@ -272,7 +272,7 @@ consent_or_die() {
 }
 
 # --- safe apply --------------------------------------------------------------
-# Project policy (AGENTS.md safety rule 1): always run a server-side dry-run
+# Project policy (CONTRIBUTING.md safety rule 1): always run a server-side dry-run
 # before applying. A dry-run that the API server *accepts* is authoritative -
 # it runs the real admission chain and schema validation.
 #
@@ -314,7 +314,7 @@ apply_manifest() {
 }
 
 # --- safe delete -------------------------------------------------------------
-# Project policy (AGENTS.md safety rule 1): dry-run server-side before deleting
+# Project policy (CONTRIBUTING.md safety rule 1): dry-run server-side before deleting
 # too. `kubectl delete --dry-run=server` runs the same admission and finalizer
 # logic as a real delete without performing it, so a manifest or RBAC problem
 # surfaces before anything is destroyed.

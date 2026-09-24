@@ -43,7 +43,7 @@
 #   Rule 1: `kubectl drain --dry-run=server` runs BEFORE the real drain, and is
 #           asserted to run first. Verified offline: kubectl drain accepts
 #           --dry-run=server on v1.31.14.
-#   Rule 2: `cordon` and `drain` are both explicitly destructive (AGENTS.md rule
+#   Rule 2: `cordon` and `drain` are both explicitly destructive (CONTRIBUTING.md rule
 #           2) and both sit behind a consent gate, in the full-test path only.
 #           In the guard path NOTHING is cordoned or drained at all.
 #   Rule 3: no pod is deleted; drain goes through the eviction API, which is the
@@ -213,7 +213,7 @@ if [[ "${MODE}" == "guard" ]]; then
   ok "${SCENARIO}: PASSED (GUARD TEST - single schedulable node)"
   detail "to run the FULL test, the cluster needs >=2 nodes:"
   detail "  minikube node add --profile ${CLUSTER_NAME}"
-  detail "expanding to multi-node is past the 3-resource threshold (AGENTS.md rule 7)"
+  detail "expanding to multi-node is past the 3-resource threshold (CONTRIBUTING.md rule 7)"
   detail "and needs explicit authorisation - see design.md section 7"
   exit 0
 fi
@@ -227,7 +227,7 @@ NODE="$(node_names | head -n 1)"
 detail "target node: ${NODE}"
 
 if ! chaos_require_consent "${SCENARIO}" \
-     "cordon and drain node ${NODE} (destructive: AGENTS.md rule 2)"; then
+     "cordon and drain node ${NODE} (destructive: CONTRIBUTING.md rule 2)"; then
   warn "refused: no consent to drain (re-run with --yes to opt in)"
   print_failure_summary || exit 1
   exit 3
@@ -235,7 +235,7 @@ fi
 
 # Rule 1: server-side dry-run before the real drain. This exercises the drain
 # planning (eviction checks, PDB admission, daemonset handling) without evicting.
-# If the pod count is >3 this touches more than three resources, so AGENTS.md
+# If the pod count is >3 this touches more than three resources, so CONTRIBUTING.md
 # rule 7 requires a plan first - stated here rather than silently proceeding.
 warn "rule 7: draining a node affects every pod on it; a plan is required above 3 resources"
 log "rule 1: server-side dry-run of the drain"
@@ -251,7 +251,7 @@ ok "dry-run accepted"
 T_DRAIN_START="${SECONDS}"
 # Rule 1 for the CORDON specifically, as a separate probe from the drain above.
 # The drain dry-run does not cover it: cordon is its own destructive operation
-# (AGENTS.md rule 2 lists it explicitly), and it is the step that actually removes
+# (CONTRIBUTING.md rule 2 lists it explicitly), and it is the step that actually removes
 # the node from service. Verified offline: `kubectl cordon` accepts
 # --dry-run=server on the kubectl in this repository (v1.31.14).
 log "rule 1: server-side dry-run of the cordon"

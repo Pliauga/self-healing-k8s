@@ -5,7 +5,7 @@
 #   That a direct `kubectl delete pod` is healed by the ReplicaSet controller,
 #   and - the point of the scenario - that it does so while BYPASSING the
 #   PodDisruptionBudget. This is a negative control, never a remediation path:
-#   AGENTS.md safety rule 3 and docs/adr/0005-use-eviction-api-not-delete.md
+#   CONTRIBUTING.md safety rule 3 and docs/adr/0005-use-eviction-api-not-delete.md
 #   make the eviction API the only sanctioned way to replace a pod.
 #
 #   Authoritative expectations: docs/design.md §7 (scenario table) and §8

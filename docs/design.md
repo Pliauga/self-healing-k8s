@@ -732,7 +732,7 @@ then discovers it cannot drain would leave the sole node unschedulable, which is
 strictly worse than not running the scenario at all.
 
 Expanding to multi-node is a `minikube delete` + recreate — a change well past
-the three-resource threshold in `AGENTS.md` rule 7 — and needs explicit
+the three-resource threshold in `CONTRIBUTING.md` rule 7 — and needs explicit
 authorisation before it is attempted.
 
 ---

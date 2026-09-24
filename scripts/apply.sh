@@ -42,7 +42,7 @@ detail "namespace : ${K8S_NAMESPACE}"
 # Apply the namespace first and wait for it to be Active: applying namespaced
 # resources in the same instant as their namespace occasionally races.
 # Every manifest goes through apply_manifest, which runs a server-side dry-run
-# before applying (project safety policy, AGENTS.md rule 1).
+# before applying (project safety policy, CONTRIBUTING.md rule 1).
 log "dry-run then apply"
 apply_manifest "${K8S_DIR}/00-namespace.yaml" || die "namespace manifest failed validation"
 kubectl wait --for=jsonpath='{.status.phase}'=Active \

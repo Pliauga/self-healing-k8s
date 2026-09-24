@@ -606,9 +606,9 @@ event_log_snapshot() {
 
 # check_event_log <label> [baseline-file] [allowed-object-regex]
 #
-# AGENTS.md safety rule 10: after any possibly-mutating step, look at the event
+# CONTRIBUTING.md safety rule 10: after any possibly-mutating step, look at the event
 # log and report unintended mutations - the ones a success message will not
-# mention. This always prints the exact command from AGENTS.md (tail -5) and,
+# mention. This always prints the exact command from CONTRIBUTING.md (tail -5) and,
 # when a baseline was captured, reports every event that is NEW since it.
 #
 # A new event whose object does not match <allowed-object-regex> is recorded as a
@@ -618,7 +618,7 @@ event_log_snapshot() {
 check_event_log() {
   local label="$1" baseline="${2:-}" allowed="${3:-}"
 
-  log "AGENTS.md rule 10 - checking the event log (${label})"
+  log "CONTRIBUTING.md rule 10 - checking the event log (${label})"
   detail "kubectl get events -n ${K8S_NAMESPACE} --sort-by=.lastTimestamp | tail -5"
   kubectl get events -n "${K8S_NAMESPACE}" --sort-by=.lastTimestamp 2>/dev/null | tail -5 | sed 's/^/     /' || true
 
@@ -761,7 +761,7 @@ run_inject() {
 
 # chaos_require_consent <label> <action-description>
 #
-# AGENTS.md safety rule 2: destructive commands need explicit approval. Returns 0
+# CONTRIBUTING.md safety rule 2: destructive commands need explicit approval. Returns 0
 # when consent was given (interactively or via ASSUME_YES=1 / --yes) and 1 when
 # it was refused, without mutating anything.
 #

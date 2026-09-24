@@ -46,7 +46,7 @@
 # SAFETY
 #   Rule 2: consent gates. The driver scales the load generator up (a mutation)
 #           and this scenario may scale demo-api down; both are behind consent.
-#           `scale --replicas=0` is explicitly destructive per AGENTS.md rule 2.
+#           `scale --replicas=0` is explicitly destructive per CONTRIBUTING.md rule 2.
 #   Rule 9: the baseline guard is verified in the same shell invocation as use.
 #   Rule 10: event log checked after the run.
 #
@@ -116,7 +116,7 @@ assert_eq "precondition: HPA minReplicas (k8s/30-hpa.yaml)" "${MIN_REPLICAS}" "3
 
 # --- RULE 9: verify the baseline guard in the SAME shell invocation as its use.
 # Finding 4 in design.md section 14 is the bug this guard exists to prevent, and
-# a guard verified in one shell and used in another is not a guard (AGENTS.md
+# a guard verified in one shell and used in another is not a guard (CONTRIBUTING.md
 # rule 9). Both properties are checked here, in this process, immediately before
 # the driver is invoked: the function must exist, AND it must still refuse to
 # report a baseline while the load generator is running.
@@ -148,7 +148,7 @@ else
 fi
 
 # The driver must own the baseline. `kubectl scale ... --replicas=0` on the load
-# generator is destructive per AGENTS.md rule 2, so the driver's consent gate is
+# generator is destructive per CONTRIBUTING.md rule 2, so the driver's consent gate is
 # relied upon here; this test adds its own gate before calling it.
 if ! chaos_require_consent "${SCENARIO}" \
      "run the CPU load scenario: scale the load generator to 0 then to 1, reset demo-api to ${MIN_REPLICAS} replicas, and measure the HPA scale-out"; then

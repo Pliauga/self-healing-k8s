@@ -275,7 +275,7 @@ else
   # --- RULE 9: the guard is verified in the SAME shell invocation as the call
   # it guards. Not a prior command, not a separate step: the gate is checked, the
   # gate is then used, in this block, in this process. A guard checked elsewhere
-  # is not a guard (AGENTS.md rule 9).
+  # is not a guard (CONTRIBUTING.md rule 9).
   if ! type -t chaos_require_consent >/dev/null 2>&1; then
     _chaos_fail "rule 9: consent guard present in this shell invocation" \
       "chaos_require_consent is not a function here; refusing to call /recover"

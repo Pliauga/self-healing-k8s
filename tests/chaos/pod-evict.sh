@@ -4,7 +4,7 @@
 # WHAT THIS TESTS
 #   That pod replacement goes through the eviction subresource, so the API server
 #   consults the PodDisruptionBudget before agreeing. This is the sanctioned path
-#   (AGENTS.md safety rule 3; docs/adr/0005-use-eviction-api-not-delete.md).
+#   (CONTRIBUTING.md safety rule 3; docs/adr/0005-use-eviction-api-not-delete.md).
 #
 #   The scenario has TWO distinct outcomes and BOTH are asserted, because a
 #   refusal is not a failure - it is the budget working (ADR-0005, Consequences):

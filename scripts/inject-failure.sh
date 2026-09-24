@@ -12,7 +12,7 @@
 # Scenarios:
 #   pod-evict      Evict a pod via the eviction API. RESPECTS the PDB, so the
 #                  API server can refuse it. This is the sanctioned way to
-#                  replace a pod (AGENTS.md safety rule 3, ADR-0002).
+#                  replace a pod (CONTRIBUTING.md safety rule 3, ADR-0002).
 #   pod-kill       Delete a pod directly. NOT a remediation method: it bypasses
 #                  the PodDisruptionBudget entirely. Provided only as a negative
 #                  control, to demonstrate what the PDB protects against.
@@ -110,7 +110,7 @@ scenario_pod_kill() {
   log "scenario: pod-kill (NEGATIVE CONTROL)"
   detail "target pod: ${pod} (restarts: ${before})"
 
-  # AGENTS.md safety rule 3 forbids `delete pod` as a remediation method, and
+  # CONTRIBUTING.md safety rule 3 forbids `delete pod` as a remediation method, and
   # ADR-0002 explains why: it bypasses the PodDisruptionBudget. This scenario is
   # retained purely to *demonstrate* that bypass, by contrast with pod-evict.
   # It is not a recovery procedure.
@@ -119,7 +119,7 @@ scenario_pod_kill() {
 
   confirm "Delete pod ${pod} directly (bypassing the PDB)?" || { warn "aborted"; return 0; }
 
-  # Project safety policy (AGENTS.md rule 1): dry-run server-side before
+  # Project safety policy (CONTRIBUTING.md rule 1): dry-run server-side before
   # destroying anything. This exercises the real admission chain without
   # performing the delete.
   if ! kubectl delete pod "${pod}" -n "${K8S_NAMESPACE}" --dry-run=server >/dev/null 2>&1; then
