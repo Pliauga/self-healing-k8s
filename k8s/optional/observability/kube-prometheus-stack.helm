@@ -1,0 +1,96 @@
+# Helm values for kube-prometheus-stack, trimmed for a laptop-sized minikube.
+#
+# Install with:
+#   helm repo add prometheus-community \
+#     https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install kube-prometheus-stack \
+#     prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     --values k8s/optional/observability/kube-prometheus-stack.helm
+#
+# The `release: kube-prometheus-stack` label used by the ServiceMonitor and
+# PrometheusRule in k8s/optional/observability/ must match the release name
+# chosen here.
+
+# The full stack schedules ~1.5 CPU and ~3Gi of Grafana/Prometheus/Alertmanager
+# plus a scraping DaemonSet. On minikube, start with:
+#   minikube start --cpus=4 --memory=8192
+prometheus:
+  prometheusSpec:
+    # Retain 6h rather than the default; this is a demo, not a monitoring tier.
+    retention: 6h
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # Discover ServiceMonitors and PrometheusRules in *all* namespaces. The
+    # chart default only selects the release namespace, which would silently
+    # ignore the rules in `selfhealing`.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # A small PVC keeps data across pod restarts. Omit this entirely to use an
+    # emptyDir and store metrics in memory instead.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+grafana:
+  # Default credentials are admin / prom-operator. Change before exposing.
+  # For local access: kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# These components are of limited value on a single-node local cluster and
+# consume real memory. Set to true if you want them.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# The node-exporter and kube-state-metrics exporters *are* needed: the alert
+# rules depend on kube_pod_container_status_restarts_total and
+# kube_deployment_status_replicas_available from kube-state-metrics.
+kubeStateMetrics:
+  enabled: true
+nodeExporter:
+  enabled: true
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  # Admission webhooks need TLS cert generation on first install; the chart
+  # handles this, but it is the most common cause of a slow first install.
+  admissionWebhooks:
+    enabled: true

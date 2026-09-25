@@ -1,0 +1,256 @@
+---
+# PrometheusRule: the three alerts that drive the demo-api remediation agent.
+#
+# Written against the metric contract exposed by app/app.py's `/metrics` route.
+# The application's own gauges (demo_api_*), not the kubelet or kube-state-metrics
+# series, are the primary signal here, because they report what the probes *would*
+# decide rather than what the kubelet observed seconds-to-minutes later.
+#
+# Metric names and types below are quoted verbatim from app/app.py
+# `_prometheus_text()`:
+#
+#   demo_api_up                    gauge   1 while the process is serving
+#   demo_api_healthy               gauge   1 if /healthz would return 200
+#   demo_api_ready                 gauge   1 if /readyz would return 200
+#   demo_api_uptime_seconds        gauge   seconds since process start
+#   demo_api_fail_injections_total counter faults injected via /fail
+#   demo_api_recoveries_total      counter faults cleared via /recover
+#   demo_api_cpu_burn_seconds_total counter CPU seconds consumed by /burn
+#   demo_api_requests_total        counter requests by path/method/status
+#
+# Those gauges carry NO labels of their own (see the exposition lines in
+# `_prometheus_text()`), so each series is decorated at scrape time with the
+# target labels; `namespace="selfhealing"` below is one of them.
+#
+# The `remediation` label is the interface with the agent, per docs/design.md
+# §6.1: the vocabulary is exactly restart-pod | scale-up | investigate | escalate,
+# and the agent reads the label instead of deciding for itself.
+#
+# Every expression is `symptom or absent(guard)`. Rationale in docs/design.md §9
+# ("the agent that remediates its own detection gap") and §12.3: a missing metric
+# must be treated as a WORSE state than a bad metric, because the naive `== 0`
+# expression evaluates to *no data*, not to *firing*, exactly when the service is
+# most broken and the target has vanished.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-api-rules
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: self-healing-cluster
+    # Rule selector: must match the Prometheus instance's `ruleSelector`, which
+    # kube-prometheus-stack defaults to `release: <helm-release-name>`. Matches
+    # the release name used in
+    # k8s/optional/observability/kube-prometheus-stack.helm, and the same
+    # convention as the ServiceMonitor in this directory.
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # One group for the application-level contract (the app's own gauges) and one
+    # for the CPU/resource signal that depends on cAdvisor + kube-state-metrics.
+    # Groups are evaluated independently, so a broken cAdvisor scrape cannot stop
+    # the cheap app-level rules from firing.
+    - name: demo-api.application
+      # Evaluation interval. 30s halves the load versus the scrape interval while
+      # costing at most one extra evaluation of detection latency; the `for:`
+      # clauses dominate the reaction budget anyway (docs/design.md §12.2).
+      interval: 30s
+      rules:
+        # ------------------------------------------------------------------
+        # 1. DemoApiUnhealthy - the app says its liveness state is false.
+        # ------------------------------------------------------------------
+        - alert: DemoApiUnhealthy
+          # Real condition: the app's own health gauge is 0, i.e. /healthz would
+          # return 500, so the kubelet's liveness probe is already failing.
+          #
+          # Guard: `absent(demo_api_healthy{namespace="selfhealing"}) == 1`
+          # is 1 only when the series does not exist at all. The `== 1` is not
+          # decoration: bare `absent()` returns 1 with the labels of the selector,
+          # and making the branch's value explicit keeps it a `==` filter so it
+          # can never contribute a stray value to the result.
+          #
+          # Why CANNOT be silent: if the pod is crash-looping, the image cannot
+          # pull, the Service endpoints are empty, or the ServiceMonitor was
+          # deleted, the `== 0` branch has no series and would produce no alert.
+          # `absent()` returns 1 instead, so the alert fires on the disappearance
+          # itself. The two branches are mutually exclusive by construction -
+          # `absent()` is 1 only when the selector matches nothing, and the left
+          # branch requires that it matched something - so the `or` never
+          # double-counts and no interval exists in which both sides are empty.
+          #
+          # Deliberately NOT guarded on `demo_api_up`: that gauge (app/app.py
+          # `_prometheus_text()`) is hardcoded to 1 and is written by the same
+          # render pass as demo_api_healthy, so it disappears at exactly the same
+          # moment and adds no information here. It is used in rule 3, where the
+          # guard must not collide with a synthetic series.
+          expr: >-
+            demo_api_healthy{namespace="selfhealing"} == 0
+            or (absent(demo_api_healthy{namespace="selfhealing"}) == 1)
+          # >= 1m as required. 1m is enough because this condition is already a
+          # liveness-probe failure: at periodSeconds 10 / failureThreshold 3
+          # (k8s/10-deployment.yaml) the kubelet restarts the container at ~30s,
+          # so waiting longer mostly delays Tier 2 behind Tier 0.
+          for: 1m
+          labels:
+            # critical: the service is not merely degraded, it is failing its
+            # liveness probe. This is the tier that pages.
+            severity: critical
+            # restart-pod is the semantically correct remediation: the container
+            # has wedged and the kubelet's own remedy is the same one. Safe here
+            # only because the app clears its fault state at startup
+            # (app/app.py `_clear_fault_on_start()`), so a restart genuinely
+            # resets the condition instead of re-entering it. A restart is
+            # idempotent and bounded, whereas scale-up would add replicas that
+            # inherit the same fault. If this alert persists across restarts the
+            # condition is not a wedged process and the agent must escalate
+            # instead - the description says so.
+            remediation: restart-pod
+          annotations:
+            summary: "demo-api is failing its liveness probe"
+            description: >-
+              demo_api_healthy has been 0 for one minute (or the metric has
+              disappeared entirely, which fires this rule via its absent() guard
+              and is treated as the more serious case). Action: remediation =
+              restart-pod - evict and recreate one affected pod, respecting the
+              PodDisruptionBudget in k8s/40-pdb.yaml and never `kubectl delete
+              pod`. If pods keep re-entering this state after restart, stop
+              restarting and escalate to a human: the fault is not a wedged
+              process but something the restart cannot clear (config, image,
+              dependency).
+        # ------------------------------------------------------------------
+        # 2. DemoApiNotReady - running, but pulled out of the Service.
+        # ------------------------------------------------------------------
+        - alert: DemoApiNotReady
+          # Same two-branch shape as rule 1, applied to the readiness gauge.
+          # `for: 2m` is longer than rule 1 because readiness failure is the
+          # *designed* response to a dependency problem and is frequently
+          # transient during a rollout (minReadySeconds: 5) - firing on it too
+          # eagerly would generate agent action storms, which §12.2 names as the
+          # reason `for:` exists.
+          expr: >-
+            demo_api_ready{namespace="selfhealing"} == 0
+            or (absent(demo_api_ready{namespace="selfhealing"}) == 1)
+          for: 2m
+          labels:
+            # warning, not critical: the pod is out of the endpoints, so the
+            # Service still serves from the remaining ready replicas. The user
+            # impact is reduced capacity, not a hard outage.
+            severity: warning
+            # investigate is the correct remediation, and it is a deliberate
+            # no-op for the agent (docs/design.md §6.1): the kubelet does not
+            # restart an unready container, so someone must look at *why*
+            # /readyz fails before acting. restart-pod would be wrong because a
+            # readiness failure usually reflects a downstream dependency that a
+            # restart cannot fix and that every replica shares. scale-up would be
+            # wrong because the new replicas would be unready too.
+            remediation: investigate
+          annotations:
+            summary: "demo-api pod is not ready and has left the Service endpoints"
+            description: >-
+              demo_api_ready has been 0 for two minutes, or the metric has
+              disappeared (absent() guard). Action: remediation = investigate -
+              the agent must not actuate. Check the pod's readiness probe output,
+              then the dependency it depends on; only a human-confirmed root
+              cause should become a new, reviewed rule in this file.
+        # ------------------------------------------------------------------
+        # 3. DemoApiHighCPU - the container is CPU-bound.
+        # ------------------------------------------------------------------
+        - alert: DemoApiHighCPU
+          # Real condition: CPU consumption as a fraction of the container's CPU
+          # *limit* (500m, k8s/10-deployment.yaml).
+          #
+          # This is deliberately NOT the HPA's utilisation metric, and the two
+          # must not be confused. The HPA (k8s/30-hpa.yaml) targets
+          # `averageUtilization: 70` against the CPU *request* (100m), so its
+          # trigger is 0.07 cores; measuring "90% of the limit" is a different
+          # denominator (0.5 cores) and a different question. This rule exists to
+          # catch *throttling* - the cgroup limit being hit, which raises request
+          # latency - whereas the HPA separately handles demand-driven scale-out.
+          # That is why the threshold is 0.9 and not "about 70%": a number that
+          # reads as HPA-equivalent but is measured against another floor would
+          # fire on a healthy pod or miss a throttled one.
+          #
+          # Denominator is read from kube-state-metrics at query time rather than
+          # hardcoded to 0.5, so a change to the limit in 10-deployment.yaml
+          # cannot silently desynchronise this rule. Three caveats, each verified
+          # rather than assumed:
+          #   1. `unit="core"` is what kube-state-metrics 2.13+ emits
+          #      (version-dependent). On older releases the series carries no
+          #      `unit` label, so this matcher yields nothing, the denominator is
+          #      absent, the division yields no series and the CPU branch falls
+          #      back to its absent() guard. If that is seen in practice, drop
+          #      `unit="core"`; `resource="cpu"` already selects the right series.
+          #   2. `container="api"` matches the container name in
+          #      k8s/10-deployment.yaml.
+          #   3. If the limit were ever unset, KSM emits no series and this rule
+          #      silently stops evaluating the CPU branch. Accepted here because
+          #      the limit is set in the manifest; a stricter design would add a
+          #      second guard on the limit series itself.
+          #
+          # `avg by (pod)` collapses any duplicate series for the denominator so
+          # the division cannot fan out, and `clamp_min(..., 0.001)` keeps a
+          # zero-valued limit from producing a divide-by-zero (which yields +Inf,
+          # not an error, and would fire the alert on every scrape).
+          #
+          # Guard: identical structure to rules 1 and 2, but the meter is
+          # `absent(demo_api_up{...})` (the scrape is alive and the target still
+          # exists) rather than `absent(container_cpu_usage_seconds_total{...})`.
+          # That distinction is deliberate and is the only way to keep the two
+          # branches mutually exclusive: an absent() guard on the very series the
+          # left branch divides would be true precisely when the left branch is
+          # empty, which risks a both-empty window. demo_api_up is hardcoded to 1
+          # by app/app.py and is emitted on every scrape, so it is present exactly
+          # when the target is healthy and scrapeable.
+          #
+          # `and on()` requires `count(...) > 0`: when the target is up but
+          # cAdvisor/kube-state-metrics has never produced a CPU sample (the
+          # series simply never existed), `absent(demo_api_up)` is 0, this branch
+          # is empty, and the alert stays silent - the honest behaviour, because
+          # there is no CPU evidence to alert on. The `and on()` match is legal
+          # because both sides are reduced to the empty label set: `absent()`
+          # strips the selector's labels, `count()` aggregates them away, and
+          # `on()` matches on that empty set. Without the `and on()`, PromQL
+          # errors with "many-to-many matching not allowed"; with a bare
+          # `and on(...)` name the empty-label sides would not match and the
+          # guard would silently never trigger.
+          expr: >-
+            (rate(container_cpu_usage_seconds_total{namespace="selfhealing",container="api"}[5m])
+            / on(pod) group_left()
+            clamp_min(avg by (pod) (kube_pod_container_resource_limits{namespace="selfhealing",container="api",resource="cpu",unit="core"}), 0.001)) > 0.9
+            or (absent(demo_api_up{namespace="selfhealing"}) == 1
+            and on() (count(container_cpu_usage_seconds_total{namespace="selfhealing",container="api"}) > 0))
+          # 5m: CPU saturation must be sustained before acting. Anything shorter
+          # reacts to the load generator's own burst pattern rather than to a
+          # real capacity problem. The absent() branch also inherits this `for:`,
+          # which is intended - a scrape target is allowed a brief re-discovery
+          # window without paging.
+          for: 5m
+          labels:
+            # warning: degradation, not outage. The kubelet will not restart the
+            # container and the Service keeps serving, just slower.
+            severity: warning
+            # scale-up is the correct remediation: this is a demand problem, not
+            # a fault, and the horizontal response is both reversible and
+            # bounded - the HPA's maxReplicas: 10 caps runaway scaling
+            # (docs/design.md §9). restart-pod would be actively harmful (it
+            # discards a working in-flight replica); investigate is wasted
+            # latency for a signal the HPA already understands.
+            remediation: scale-up
+          annotations:
+            summary: "demo-api is being CPU-throttled (sustained >90% of its limit)"
+            description: >-
+              Container {{ $labels.pod }} has sustained CPU usage above 90% of
+              its 500m CPU limit (k8s/10-deployment.yaml) for five minutes, so
+              requests are very likely being throttled; or the demo_api_up
+              target has vanished while CPU samples still exist, in which case
+              this fires through its absent() guard. Action: remediation =
+              scale-up - raise the Deployment's replica count within the HPA's
+              minReplicas: 3 / maxReplicas: 10 bounds and let the HPA take over.
+              Note this rule measures usage against the LIMIT, whereas the HPA
+              scales on utilisation against the 100m REQUEST; the HPA may
+              therefore have already scaled out for demand while this rule stays
+              quiet. If it is not scaling, check that metrics-server is running
+              and that the CPU request is still set - without a request the HPA
+              reports <unknown> and cannot react at all.

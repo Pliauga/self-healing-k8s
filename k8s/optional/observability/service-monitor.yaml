@@ -1,0 +1,71 @@
+---
+# ServiceMonitor: tells the Prometheus Operator *where* to scrape demo-api.
+#
+# This is the CRD-based replacement for the pod-template annotations
+# (prometheus.io/scrape) still present in k8s/10-deployment.yaml. Use one or the
+# other, never both, or every series is scraped twice and (until Prometheus
+# de-duplicates it) every alert fires on doubled sample rates.
+#
+# Only valid when the monitoring.coreos.com CRDs exist. Confirm before applying:
+#
+#   kubectl get crd servicemonitors.monitoring.coreos.com
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: demo-api
+  # The namespace this object lives in. Prometheus's own namespace is
+  # `monitoring`, but the *target* is here, so the scrape config must be allowed
+  # to reach across namespaces - see spec.namespaceSelector below.
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: self-healing-cluster
+    # Selector label, NOT a descriptive one. The Prometheus Operator only picks
+    # up ServiceMonitors matching its `serviceMonitorSelector`, and the
+    # kube-prometheus-stack chart defaults that selector to
+    # `release: <helm-release-name>`. k8s/optional/observability/
+    # kube-prometheus-stack.helm installs the release as `kube-prometheus-stack`
+    # (see its `helm upgrade --install kube-prometheus-stack` line), so the value
+    # must be exactly `kube-prometheus-stack`. Rename the release and this label
+    # must be renamed with it, or the target is silently never scraped.
+    #
+    # This repo has no competing convention: k8s/optional/observability/
+    # prometheus-rules.yaml uses the same `release: kube-prometheus-stack` key, so
+    # the house style is the stock chart default.
+    release: kube-prometheus-stack
+spec:
+  # Which Services to scrape. Matching on the Service's own labels (k8s/
+  # 20-service.yaml) rather than on the pods keeps the target stable across
+  # rollouts: Service endpoints are re-derived per scrape, so a pod that drops
+  # out of the endpoints because its readiness probe is failing stops being
+  # scraped - which is precisely why every rule in prometheus-rules.yaml needs an
+  # absent() guard rather than trusting a `== 0` value to arrive.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-api
+  # The ServiceMonitor lives in `selfhealing`, so a same-namespace selector would
+  # work; it is spelled out anyway so that moving Prometheus (or this object)
+  # cannot silently break the target, and so the cross-namespace reach is an
+  # explicit, reviewable decision rather than an accident of placement.
+  namespaceSelector:
+    matchNames:
+      - selfhealing
+  endpoints:
+    # `port` is the Service port *name* (`http` in k8s/20-service.yaml), not the
+    # number. Naming it means the monitor survives a change to `port:` there.
+    # Do not write `targetPort: 8080` alongside this: the Operator forbids
+    # setting both, and the Service already resolves `http` -> 8080.
+    - port: http
+      path: /metrics
+      # 15s, not the kube-prometheus-stack default of 30s: the agent's reaction
+      # budget is dominated by scrape resolution plus the `for:` clauses in
+      # prometheus-rules.yaml, so the scrape interval is the cheapest latency to
+      # buy back. See docs/design.md §12.2 - the `for:` clause is the load
+      # limiter, and a shorter interval here does not shorten it.
+      interval: 15s
+      # Must stay below `interval`; at or above it, Prometheus marks the target
+      # as scraping too slowly and reports it down, and every absent() guard in
+      # prometheus-rules.yaml fires for the wrong reason.
+      scrapeTimeout: 10s
+      scheme: http

@@ -1,0 +1,189 @@
+---
+# RBAC for the self-healing remediation agent.
+#
+# This is the security boundary of the whole design, and it is expressed as TWO
+# ServiceAccounts rather than one:
+#
+#   remediation-diagnosis  read-only. May observe pods, events, deployments and
+#                          replicasets, and read pod logs. It may NOT mutate
+#                          anything. This is the identity the LLM runs as.
+#   remediation-executor   write-only, and barely: `create` on
+#                          policy/pods/eviction and nothing else. This is the
+#                          identity the deterministic executor runs as.
+#
+# WHY TWO IDENTITIES INSTEAD OF ONE (ADR-0003, "LLM proposes, executor
+# disposes"; docs/design.md §6.4):
+# The component that *decides* is not the component that *acts*. A diagnosis
+# workload holding a credential that can evict pods is exactly the failure mode
+# ADR-0003 rejects: one hallucinated tool call becomes a real disruption. Here
+# the LLM's ServiceAccount is read-only by construction, so even a fully
+# compromised diagnosis pod can do no more than read the namespace it already
+# watches. The executor's ServiceAccount is narrow enough that its worst case is
+# one budget-checked eviction.
+#
+# The diagnosis role is therefore a strict superset of "observe", and the
+# executor role contains no read verbs at all: the two grants do not overlap, so
+# neither identity can both learn and act.
+#
+# Deliberately NOT granted to either identity:
+#   * delete on pods         - bypasses the PDB and races the ReplicaSet
+#                              (see the executor's eviction rule below, ADR-0005)
+#   * create/patch on nodes  - cordoning/draining stays a human decision
+#   * anything cluster-scoped- both identities are namespaced to `selfhealing`
+#   * secrets                - an agent that can read secrets is a
+#                              lateral-movement risk
+#
+# Note: eviction is in the `policy` API group, not the core group.
+#
+# The two ServiceAccounts.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: remediation-diagnosis
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-diagnosis
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: self-healing-cluster
+# The token is required: the diagnosis stage calls the read API itself.
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: remediation-executor
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-executor
+    app.kubernetes.io/component: executor
+    app.kubernetes.io/part-of: self-healing-cluster
+# Required for the same reason: the executor is the one that calls the API.
+automountServiceAccountToken: true
+
+---
+# ---------------------------------------------------------------------------
+# Diagnosis: read-only.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: remediation-diagnosis
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-diagnosis
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: self-healing-cluster
+rules:
+  # Observe the workloads the agent is allowed to reason about, and the events
+  # that explain why they are unhealthy. No mutating verb appears in this Role.
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list", "watch"]
+  # Read pod logs so the diagnosis can attach evidence to its proposal.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Detect which ReplicaSet/Deployment owns a pod, so `target` in the diagnosis
+  # JSON names a real owner and not just a pod that is about to disappear.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  # WHY THERE IS NO `patch` ON deployments HERE (ADR-0003).
+  #
+  # An earlier revision of this file granted `patch` on apps/deployments, so the
+  # agent could "restart a deployment". It was removed, and the reason is worth
+  # recording because the grant looks harmless and a future reviewer will ask:
+  #
+  # ADR-0003 fixes a CLOSED remediation vocabulary - restart-pod, scale-up,
+  # investigate, escalate. Every one of those is expressible with the eviction
+  # grant below: restart-pod is an eviction (the ReplicaSet replaces the pod),
+  # and scale-up is a decision the HPA executes, not something the agent writes.
+  # `patch deployments` is not one of the four verbs; it is arbitrary mutation of
+  # a workload spec, which is strictly broader than any listed remedy. Granting
+  # it means the executor could rewrite any deployment field - image, command,
+  # resource limits - and the allowlist would no longer be a bound on what the
+  # agent can do, only on what it usually does. The vocabulary is the safety
+  # property; a permission wider than the vocabulary dissolves it.
+  #
+  # If a future remedy genuinely needs a deployment write, it must be added to
+  # the vocabulary in ADR-0003 FIRST, given its own narrowly-scoped grant, and
+  # reviewed as a design change - not smuggled in as a convenient verb.
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: remediation-diagnosis
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-diagnosis
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: self-healing-cluster
+subjects:
+  - kind: ServiceAccount
+    name: remediation-diagnosis
+    namespace: selfhealing
+roleRef:
+  kind: Role
+  name: remediation-diagnosis
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ---------------------------------------------------------------------------
+# Execution: eviction only.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: remediation-executor
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-executor
+    app.kubernetes.io/component: executor
+    app.kubernetes.io/part-of: self-healing-cluster
+rules:
+  # The ONLY mutating permission granted anywhere in this file, and it is
+  # deliberately narrow. DO NOT "helpfully" add `delete` on pods here.
+  #
+  # ADR-0005: a plain pod DELETE bypasses the PodDisruptionBudget entirely, so an
+  # agent deleting in a loop can drain an entire replica set - and it will do so
+  # precisely when the workload is already degraded and the budget is most
+  # needed. A remediation action must not be able to cause the outage it exists
+  # to prevent. Deletion is also racy against the ReplicaSet controller, which
+  # may create a replacement while the deletion is still propagating.
+  #
+  # The eviction subresource instead routes through the API server's admission
+  # path, which enforces the budget and returns 429 TooManyRequests when it is
+  # exhausted. The executor must treat 429 as "back off and escalate", never as
+  # a reason to reach for a stronger verb. The RBAC gap makes the unsafe
+  # operation unavailable rather than merely discouraged.
+  #
+  # Spelling matters: `policy` group, `pods/eviction` resource, `create` verb.
+  # The core "" group does not carry eviction, and granting `create` on plain
+  # `pods` would be a different (and wrong) permission.
+  - apiGroups: ["policy"]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: remediation-executor
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: remediation-executor
+    app.kubernetes.io/component: executor
+    app.kubernetes.io/part-of: self-healing-cluster
+subjects:
+  # Bound to the executor ServiceAccount only. The diagnosis ServiceAccount is
+  # deliberately absent from this binding: that is what makes "the component
+  # that decides cannot itself act" true in RBAC and not just in prose.
+  - kind: ServiceAccount
+    name: remediation-executor
+    namespace: selfhealing
+roleRef:
+  kind: Role
+  name: remediation-executor
+  apiGroup: rbac.authorization.k8s.io
