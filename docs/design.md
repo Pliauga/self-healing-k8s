@@ -44,14 +44,12 @@ suffices locally; see §12.3 for the production note).
 The term is overloaded. This design distinguishes four capabilities, because they
 have very different costs and failure modes:
 
-
 | Capability     | Question answered          | Mechanism                 | Latency |
 | -------------- | -------------------------- | ------------------------- | ------- |
 | **Restart**    | Is this process wedged?    | kubelet liveness probe    | ~40 s   |
 | **Replace**    | Is this pod beyond saving? | ReplicaSet reconciliation | ~15 s   |
 | **Reschedule** | Is this node gone?         | scheduler + controllers   | ~60 s   |
 | **Rescale**    | Is demand beyond capacity? | HPA                       | ~60 s   |
-
 
 A system that only does the first is often described as self-healing, but it will
 happily restart a container forever without ever resolving the fault. This design
@@ -97,13 +95,11 @@ enhancement, not a dependency, of the tier below it.
 
 ### 3.1 The three tiers
 
-
 | Tier | Component          | Detects                  | Acts by                     | Time to detect | Survives control-plane outage |
 | ---- | ------------------ | ------------------------ | --------------------------- | -------------- | ----------------------------- |
 | 0    | kubelet (per node) | failed probe             | restarting the container    | 10–30 s        | yes                           |
 | 1    | controllers        | desired≠actual           | creating/evicting pods      | 1–15 s         | no                            |
 | 2    | external agent     | metric threshold / alert | eviction, patch, annotation | 1–5 min        | no                            |
-
 
 **Design rule.** A fault must be handled at the *lowest* tier capable of resolving
 it. Tier 2 is reserved for conditions that cannot be expressed as a probe or a
@@ -121,13 +117,11 @@ Manifests: `[k8s/10-deployment.yaml](../k8s/10-deployment.yaml)`
 Three probes with deliberately different tuning, because they answer different
 questions:
 
-
 | Probe            | Question                 | Tuning                            | Effect of failure                    |
 | ---------------- | ------------------------ | --------------------------------- | ------------------------------------ |
 | `startupProbe`   | has it finished booting? | period 5 s, threshold 24 (≤120 s) | restart, while liveness is suspended |
 | `readinessProbe` | should it get traffic?   | period 5 s, threshold 2 (~10 s)   | removed from Service endpoints       |
 | `livenessProbe`  | is it wedged?            | period 10 s, threshold 3 (~30 s)  | container restart                    |
-
 
 The tuning asymmetry is the whole point. **Readiness should be fast and tight;
 liveness should be slow and forgiving.** Conflating them produces the classic
@@ -237,7 +231,6 @@ liveness:   periodSeconds × failureThreshold  = 10 s × 3  = 20–30 s
 the timeout never applies. Adding it (as an earlier revision of this document did,
 to reach ~43 s) measures the wrong failure mode.
 
-
 **Readiness detection is a range, not a point.** The readiness figures above are
 the *worst case*. The kubelet samples on a fixed period, but a fault appears at
 an arbitrary offset within that period, so the number of failed probes the
@@ -305,7 +298,6 @@ pod stops receiving traffic roughly 30 seconds before the kubelet restarts it.
 Desired state is declared; controllers continuously drive actual state toward it.
 No monitoring is involved, and no thresholds need tuning.
 
-
 | Controller | Declared in                           | Reconciles               |
 | ---------- | ------------------------------------- | ------------------------ |
 | ReplicaSet | Deployment `.spec.replicas`           | missing/deleted pods     |
@@ -313,7 +305,6 @@ No monitoring is involved, and no thresholds need tuning.
 | HPA        | `minReplicas`/`maxReplicas`, 70 % CPU | replica count vs. demand |
 | PDB        | `minAvailable: 2`                     | voluntary disruption     |
 | scheduler  | `topologySpreadConstraints`           | replica placement        |
-
 
 Two choices deserve justification:
 
@@ -520,14 +511,12 @@ Three properties matter here:
 
 The agent's authority is the tightest boundary in the design:
 
-
 | Granted                                                 | Withheld (deliberately)                                |
 | ------------------------------------------------------- | ------------------------------------------------------ |
 | `get/list/watch` pods, events, deployments, replicasets | `delete` pods — bypasses the PDB, races the ReplicaSet |
 | `get` pods/log — evidence for decisions                 | `create/patch` nodes — cordon/drain stays a human call |
 | `create` policies/pods/eviction                         | any cluster-scoped resource                            |
 | `patch` apps/deployments                                | any access to Secrets                                  |
-
 
 The role is namespaced to `selfhealing`. An agent with cluster-admin that watches
 Prometheus is a lateral-movement path: compromising the metrics pipeline yields
@@ -538,12 +527,10 @@ cluster control. Here it yields the ability to evict pods in one namespace.
 The agent is split into two stages, and only one of them may write
 ([ADR-0003](adr/0003-llm-proposes-executor-disposes.md)):
 
-
 | Stage         | May be an LLM?          | Credentials                                     | Output                                            |
 | ------------- | ----------------------- | ----------------------------------------------- | ------------------------------------------------- |
 | **Diagnosis** | yes                     | **read-only** (`get/list/watch`, `pods/log`)    | a classification from a closed set, plus evidence |
 | **Execution** | no — deterministic code | mutating (`pods/eviction`, `deployments` patch) | one API call, rate-limited                        |
-
 
 The remediation vocabulary is closed and small: `restart-pod`, `scale-up`,
 `investigate`, `escalate`. A diagnosis outside that set is **escalated to a
@@ -570,7 +557,6 @@ budget protects against.
 Each row is implemented as a scenario in
 `[scripts/inject-failure.sh](../scripts/inject-failure.sh)`.
 
-
 | Scenario     | Injection                                              | Healing mechanism           | Expected time     | Blast radius              |
 | ------------ | ------------------------------------------------------ | --------------------------- | ----------------- | ------------------------- |
 | `pod-kill`   | delete a pod (**negative control** — bypasses the PDB) | ReplicaSet                  | ~7–15 s           | 1 pod                     |
@@ -579,7 +565,6 @@ Each row is implemented as a scenario in
 | `cpu-load`   | sustained CPU burn                                     | HPA                         | ~60–120 s         | scales 3→7→10             |
 | `bad-image`  | invalid image tag                                      | rollout stall + manual undo | 600 s to `ProgressDeadlineExceeded`; never self-heals | 0 — old pods keep serving |
 | `node-drain` | cordon + drain                                         | scheduler reschedules       | ~60 s (estimate, unmeasured) | 1 node (requires ≥2; refuses below 2) |
-
 
 #### The `app-fail` liveness figure was the driver's polling floor, not a measurement
 
@@ -739,7 +724,6 @@ authorisation before it is attempted.
 
 ## 8. Latency budget, measured end to end
 
-
 | Path                  | Detect        | Act  | Recover | Total       |
 | --------------------- | ------------- | ---- | ------- | ----------- |
 | Readiness shed        | 5–10 s        | 2 s  | —       | **~7–14 s** |
@@ -747,7 +731,6 @@ authorisation before it is attempted.
 | Pod replacement       | 1 s           | 5–15 s | —     | **~7–15 s** |
 | HPA scale-out         | 15 s          | 30 s | 15 s    | **~60–120 s** |
 | Alert → agent → evict | 60 s (`for:`) | 15 s | —       | **~75 s+**  |
-
 
 **The `Pod replacement` row is a range because the replacement's readiness is
 phase-dependent, not because the ReplicaSet is slow.** The ReplicaSet creates a
@@ -783,7 +766,6 @@ unacceptable one for conditions it should not be handling.
 Self-healing is a feedback loop, and feedback loops amplify. Every actuation path
 needs a limiter:
 
-
 | Risk                                   | Mitigation                                                  |
 | -------------------------------------- | ----------------------------------------------------------- |
 | Restart storm from a shared dependency | liveness excludes dependency checks; readiness handles them |
@@ -794,7 +776,6 @@ needs a limiter:
 | Agent remediation loop                 | re-check + exponential backoff + attempt cap                |
 | Agent acting on stale alerts           | mandatory `GET` before actuation                            |
 | Priority inversion                     | namespace defaults to `restricted` PSA                      |
-
 
 Two anti-patterns worth naming explicitly:
 
@@ -851,14 +832,12 @@ floci services
 
 The full stack needs roughly 4 CPU and 8 GiB to be representative:
 
-
 | Component             | Requests        | Limits          |
 | --------------------- | --------------- | --------------- |
 | demo-api ×3           | 300 m / 384 Mi  | 1500 m / 768 Mi |
 | metrics-server        | ~100 m / 200 Mi | —               |
 | kube-prometheus-stack | ~500 m / 900 Mi | —               |
 | load generator        | 50 m / 32 Mi    | 500 m / 128 Mi  |
-
 
 Below ~4 CPU the HPA results become misleading: with a 4-core node and 3×500 m
 CPU limits, the workload cannot actually saturate enough to trip the 70 % target
@@ -870,7 +849,6 @@ reliably.
 
 The local design is deliberately shaped so that this migration is additive:
 
-
 | Concern           | Local                     | EKS                                    | Change required                       |
 | ----------------- | ------------------------- | -------------------------------------- | ------------------------------------- |
 | Cluster           | minikube profile          | `aws_eks_cluster` + managed node group | Terraform only                        |
@@ -881,7 +859,6 @@ The local design is deliberately shaped so that this migration is additive:
 | Image             | local build into minikube | ECR push + pull                        | registry change                       |
 | State             | single node               | Multi-AZ node groups                   | `topologySpreadConstraints` activates |
 | Disruption        | PDB                       | PDB + `capacityRebalance` / Karpenter  | additive                              |
-
 
 Three things that must change and are easy to miss:
 
@@ -905,7 +882,6 @@ questions below.
 
 ### 12.1 Signals that healing occurred
 
-
 | Signal                                                 | Meaning                             |
 | ------------------------------------------------------ | ----------------------------------- |
 | `kube_pod_container_status_restarts_total`             | liveness fired                      |
@@ -913,7 +889,6 @@ questions below.
 | endpoints count < replica count                        | readiness shedding traffic          |
 | `kube_horizontalpodautoscaler_status_current_replicas` | HPA acted                           |
 | `kube_pod_status_unschedulable`                        | Tier 1/2 cannot help — needs a node |
-
 
 ### 12.2 Alert rule design
 

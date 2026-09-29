@@ -22,13 +22,11 @@ credentials), and dangerous (the agent is itself a thing that can fail).
 Model self-healing as three independent, layered tiers, and adopt the rule:
 **a fault must be handled at the lowest tier capable of resolving it.**
 
-
 | Tier | Mechanism                                                   | Detection latency | Survives control-plane outage | Authority                   |
 | ---- | ----------------------------------------------------------- | ----------------- | ----------------------------- | --------------------------- |
 | 0    | kubelet probes (liveness, readiness, startup)               | 10–45 s           | Yes                           | Per-node, autonomous        |
 | 1    | Controller reconciliation (ReplicaSet, HPA, PDB, scheduler) | 1–15 s            | No                            | Declarative, threshold-free |
 | 2    | External LLM agent (alert-driven)                           | 60–120 s          | No                            | Narrow, audited, gated      |
-
 
 Tier 2 is reserved for conditions that **cannot be expressed as a probe or a
 reconciliation rule**: p99 latency SLO breaches, queue-depth anomalies,
