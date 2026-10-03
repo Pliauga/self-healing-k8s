@@ -10,6 +10,7 @@ context, the decision, and what it costs — including what was rejected and why
 | [0003](0003-llm-proposes-executor-disposes.md) | The LLM proposes; a deterministic executor disposes |
 | [0004](0004-three-tier-healing-model.md) | Three-tier healing, handled at the lowest capable tier |
 | [0005](0005-use-eviction-api-not-delete.md) | Use the eviction API, never pod deletion, for remediation |
+| [0006](0006-single-agent-serviceaccount.md) | One ServiceAccount for the agent: the RBAC boundary is the process boundary |
 
 ## Conventions
 

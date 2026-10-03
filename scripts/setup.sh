@@ -107,8 +107,15 @@ log "applying Kubernetes manifests"
 SKIP_IMAGE_BUILD=1 "${SCRIPTS_DIR}/apply.sh" --yes
 
 if [[ "${WITH_LOAD_GENERATOR}" == "1" ]]; then
-  log "deploying the load generator"
-  kubectl apply -f "${K8S_DIR}/optional/agent/load-generator.yaml"
+  log "deploying optional agent resources (RBAC + load generator)"
+  # Apply the whole optional/agent directory, not one named file. Applying only
+  # load-generator.yaml is why `k8s/optional/agent/rbac.yaml` was never installed
+  # by this path: the agent's ServiceAccount and Role existed in the repo but not
+  # in the cluster, so the executor's read guards failed with 403. The directory
+  # is applied through apply.sh --optional, which carries its own server-side
+  # dry-run (CONTRIBUTING.md rule 1); --yes is passed because this script already
+  # obtained consent above.
+  "${SCRIPTS_DIR}/apply.sh" --optional --yes
   wait_for_rollout "${K8S_NAMESPACE}" load-generator || true
 fi
 

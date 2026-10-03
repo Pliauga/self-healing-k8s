@@ -1,7 +1,7 @@
 # ADR-0003: LLM Proposes, Deterministic Executor Disposes
 
 **Date:** 2026-09-28
-**Status:** Accepted
+**Status:** Accepted — the decide/act separation remains in force; its two-ServiceAccount mechanism is **Superseded by ADR-0006**
 
 ## Context
 
