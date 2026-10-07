@@ -1,0 +1,14 @@
+# Runtime dependencies for the Tier 2 remediation agent.
+#
+# Pinned exactly, for the same reason app/requirements.txt is: the executor's
+# behaviour has to be reproducible, so a silent upstream change must not be able
+# to alter it on a rebuild.
+#
+# Only the three direct dependencies appear here. openai's own dependencies
+# (httpx2, jiter, pydantic, anyio, sniffio, typing-extensions, ...) are resolved
+# by pip from openai's declared metadata. Pinning them here would be restating
+# internals this project does not depend on directly, and would break the moment
+# openai changes them.
+Flask==3.1.0
+gunicorn==23.0.0
+openai==3.31.0
