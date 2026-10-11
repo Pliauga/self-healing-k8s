@@ -1,0 +1,67 @@
+# Routes the three demo-api alerts to the Tier 2 remediation agent.
+#
+# This is an AlertmanagerConfig CR, not a values change to the Helm release. The
+# Operator watches these objects cluster-wide because
+# kube-prometheus-stack-alertmanager has `alertmanagerConfigSelector: {}` and
+# `alertmanagerConfigNamespaceSelector: {}` (both admit everything), and merges
+# each one in as a CHILD route beneath the top-level route it generates itself.
+#
+# The Alertmanager CR defines no `spec.route` and no `configSecret`, and this is
+# the cluster's first AlertmanagerConfig. The generated top-level route groups by
+# `[namespace]`, repeats every 12h, and sends to a receiver named "null" (with one
+# child route for the Watchdog alert). So alerts this config does not match
+# -- Watchdog, NodeClockNotSynchronising, anything added later -- keep falling
+# through to "null" exactly as they do today. Nothing is swallowed.
+#
+# groupWait: 10s is deliberately below every rule's `for:` duration (1m/2m/5m), so
+# grouping costs no latency: by the time a demo-api alert leaves `pending`, its
+# group has long since formed. groupBy includes `pod` because the three alerts do
+# not all carry the same labels -- DemoApiHighCPU computes `by (pod)` while the
+# other two aggregate over the namespace -- so grouping per pod keeps a single
+# fault from fanning out into separate diagnoses.
+#
+# sendResolved: false is belt-and-braces. `_handle()` in app/agent/diagnosis.py
+# already returns 200 `ignored` for any payload whose status is "resolved", so a
+# resolution would be dropped in-process anyway; leaving it off avoids the round
+# trip. The agent acts on faults only.
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: demo-api-routes
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: self-healing-cluster
+spec:
+  route:
+    receiver: demo-agent-webhook
+    groupBy:
+      - alertname
+      - pod
+    groupWait: 10s
+    groupInterval: 5m
+    repeatInterval: 1h
+    matchers:
+      # Redundant, and kept deliberately. On a first-level route the Operator
+      # strips any existing matcher on `namespace` and re-injects the object's own
+      # namespace; how strictly it does so varies by prometheus-operator version.
+      # Where the behaviour applies this line is dropped, and where it does not it
+      # is a harmless extra filter -- either way the route stays scoped to
+      # selfhealing.
+      - name: namespace
+        value: selfhealing
+        matchType: =
+      # The three alerts defined by the PrometheusRule `demo-api-rules`. Verified
+      # against the live object, one occurrence each. A typo here would silently
+      # no-op all of Tier 2: the route would match nothing, and no alert would
+      # ever reach the agent.
+      - name: alertname
+        value: DemoApiUnhealthy|DemoApiNotReady|DemoApiHighCPU
+        matchType: =~
+  receivers:
+    - name: demo-agent-webhook
+      webhookConfigs:
+        - url: http://demo-agent.selfhealing.svc.cluster.local:8080/alert
+          sendResolved: false

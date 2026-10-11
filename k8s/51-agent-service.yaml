@@ -1,0 +1,37 @@
+---
+# ClusterIP Service fronting the single demo-agent pod. This is the address
+# Alertmanager delivers webhooks to; see k8s/52-alertmanager-webhook-config.yaml
+# for the receiver that points at it.
+#
+# The selector names only app.kubernetes.io/name. component and part-of are
+# descriptive labels carried on the metadata for humans and dashboards - adding
+# them to the selector would buy no routing precision and would make the Service
+# silently stop matching if either label ever changed. Same pattern as
+# k8s/20-service.yaml.
+#
+# Known limitation: the Deployment runs at replicas: 1 (deliberately - a single
+# sync gunicorn worker so two concurrent webhooks cannot race the executor into
+# more than one eviction), so this Service is a single point of failure. If the
+# pod is down, webhook deliveries fail until it returns; Alertmanager retries
+# with backoff and eventually drops the notification rather than queueing it
+# indefinitely. See docs/runbook.md section 1.
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-agent
+  namespace: selfhealing
+  labels:
+    app.kubernetes.io/name: demo-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: self-healing-cluster
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: demo-agent
+  ports:
+    - name: http
+      port: 8080
+      # By name, not by number: if the container port number ever changes, the
+      # Service follows automatically as long as the port is still named http.
+      targetPort: http
+      protocol: TCP
