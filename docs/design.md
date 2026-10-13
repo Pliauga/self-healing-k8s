@@ -990,13 +990,23 @@ reading code. None is derivable from the manifests, and each one cost a real
 failure before it was understood. They are collected here because they are the
 part of this design that a reader cannot reproduce from the repository alone.
 
-The seven findings fall into two families, and the second is the more dangerous.
-Findings **1-5** are a tool whose reported result diverges from its actual
-behaviour — loud, surprising, and diagnosable once seen. Findings **6 and 7**
-(and the three scoping defects found while fixing them) are a check whose scope
-does not match reality — **silent**, because the check keeps passing. The second
-family recurred nine times in one session and is treated separately in
-"The dominant failure mode" below.
+This section holds **seven numbered findings plus nine lettered rows**, and they
+fall into two families; the second is the more dangerous. Findings **1-5** are a
+tool whose reported result diverges from its actual behaviour — loud, surprising,
+and diagnosable once seen. Findings **6 and 7** (and the three scoping defects
+found while fixing them) are a check whose scope does not match reality —
+**silent**, because the check keeps passing. The second family recurred nine times
+in one session and is treated separately in "The dominant failure mode" below,
+where its recurrences carry **letters (6, 7, A, B, C, A2, D, E, F)** rather than
+numbers so that they cannot collide with the numbered findings above.
+
+Findings **10 and 11** (§14's last subsection) were added later and keep their
+original labels. `HANDOFF.md` §2 summarises this section as nine findings
+numbered 1-9, which is a different compression of the same material: its **8**
+("a latency figure was actually the measuring loop's floor") is row **A2** here,
+and its **9** ("assertions restated a baseline instead of reading it") is spread
+across rows **A, B, and E**. Nothing is missing from either document; the two
+simply number the scoping family differently.
 
 | # | Tool | What it did instead of what was expected | Consequence |
 | - | ---- | ---------------------------------------- | ----------- |
@@ -1137,6 +1147,120 @@ immediate loud failure; and the smoke-test mutation classifier treats `--raw` as
 mutation **before** it checks for `--dry-run`, so flag order cannot reclassify a
 real eviction as a safe probe. Each is paired with a regression check in
 `scripts/smoke-test.sh` that fails if the guard is removed.
+
+### Findings 10 and 11: the same divergence, one layer below the tool
+
+Findings 10 and 11 were found while bringing up the Tier 2 agent, after the seven
+above had been written up. They are numbered from 10 (not 8) to match the labels
+already used in `HANDOFF.md`, `docs/runbook.md`, and the session notes, so the
+three documents agree; nothing else in this section is renumbered, and finding 8
+and 9 simply do not exist. Both are instances of the *first* family — a tool whose
+reported result diverges from its actual behaviour — but with the twist that in
+each case the tool did nothing wrong: the divergence lives in the environment the
+tool was pointed at, and in a predicate that was true about the wrong thing.
+
+**10. `minikube image build` can exit 0 while building nothing.**
+
+`MINIKUBE_HOME` was unset. The default `~/.minikube` held a stale `selfhealing`
+profile record whose SSH key no longer authenticates (the cluster state had been
+moved to a project-local `.minikube-home/`, and the default record was left
+behind). With that record selected, `minikube image build` printed no output,
+**exited 0, and produced no image**; the SSH handshake failure
+(`ssh: unable to authenticate, attempted methods [none publickey]`) is logged at
+a level below the command's exit-code contract. The same no-op shape affects
+`minikube ssh` and `minikube profile list`, the latter reporting a blank status
+rather than an error. It was caught only because the build was followed by a
+positive assertion — `minikube image ls | grep <tag>` came back empty, and
+`docker run` on the tag returned `pull access denied ... repository does not
+exist`. Fix: `MINIKUBE_HOME=$PWD/.minikube-home` is **mandatory on this host, not
+a fallback** (see `docs/runbook.md` §1). The generalisable rule is the same one
+finding 1 taught: **exit 0 is not evidence** — for anything that is supposed to
+produce an artifact, assert the artifact exists.
+
+**11. `common.sh`'s state fallback keys on writability, not on which home holds
+the profile.**
+
+`scripts/lib/common.sh` selects the project-local `.minikube-home/` when
+`${HOME}/.minikube` is **not writable**, via a real write probe (`_is_writable`,
+deliberately a probe rather than a `stat`, because `mkdir -p` succeeds on an
+existing but unwritable directory). That predicate is correct for the failure it
+was written to handle, and on this host it does the right thing: `~/.minikube` is
+genuinely unwritable, so the fallback fires and every script works. The latent
+hazard is that the probe tests the *wrong property* for the case that later
+appeared. Both `~/.minikube/profiles/selfhealing` and
+`.minikube-home/.minikube/profiles/selfhealing` exist, and **the stale one is the
+default** — the very record whose SSH key is broken (finding 10). The fallback
+happens to route around it only because that directory is also unwritable. Make
+`~/.minikube` writable — a permissions fix, a change in sandbox mode, a move to a
+new machine — and `common.sh` would silently prefer the stale record, and every
+`minikube` call would return to the exit-0 no-op. The check that keys on
+writability is a stand-in for the check that matters, which is *does this home
+hold the profile the running cluster is actually using*; the two coincide today
+and the code does not know the difference. Recorded here rather than fixed: it is
+a `scripts/` change and belongs in its own review, and a proposed fix that merely
+preferred `.minikube-home/` would trade one hardcoded assumption for another.
+
+The shared lesson with finding 10 is that a check can be *correct about its stated
+predicate and wrong about the world*. `_is_writable` answers its question
+truthfully; the question was the wrong one. That is the dominant failure mode of
+this section appearing at the level of the environment rather than the manifest —
+and it is why the mitigation for finding 10 is a positive assertion rather than a
+better default, since only an assertion about the outcome is independent of which
+predicate was chosen.
+
+### Finding 12: `app-fail` self-heals via Tier 0 before Tier 2 can fire
+
+`/fail` makes `/healthz` return 500. The liveness probe (period 10 s,
+`failureThreshold` 3) restarts the container at ~40 s, and startup-clear resets
+the fault file, so the container returns healthy. `DemoApiUnhealthy` carries
+`for: 1m`, which is longer than that, so the rule cannot fire on a pod that has
+already healed.
+
+Verified live: after `/fail`, the pod's `/readyz` returned to 200 within ~40 s
+with `RESTARTS` incremented by one. Tier 0 resolved the fault before the alert
+rule's pending window elapsed, and Tier 2 never saw a firing alert for it. That
+is the tiering thesis holding empirically — **the fault a higher tier would have
+handled was resolved by a lower tier first.** Tier 2 exists for the faults Tier 0
+and Tier 1 cannot express, not for ones they already handle.
+
+The corollary is a testing constraint, and it shaped the Tier 2 verification:
+exercising the agent's eviction path against a fault that Tier 0 resolves requires
+a synthetic POST that bypasses the alert rule, and even then the diagnosis is
+ambiguous, because the injected fault is self-healing and the evidence for it
+undercuts itself. The eviction path is therefore verified by unit test
+(`app/agent/tests/test_executor.py`) rather than end to end, and that asymmetry is
+deliberate rather than a gap to close. The end-to-end run verified the other half:
+evidence gathering, schema validation, the closed action vocabulary, and the
+confidence gate escalating a 0.78 diagnosis instead of applying it.
+
+### Finding 13: a correct action from a wrong reason, and the gate that caught it
+
+In the live end-to-end test the model returned `action: restart-pod` at
+`confidence: 0.78` — below the 0.85 gate — so the executor escalated. The action
+was arguably the right one, since an eviction would have resolved the fault by
+producing a fresh pod. The reasoning behind it was not: the `root_cause` claimed
+the fault file persists in the pod's `emptyDir` across container restarts and
+therefore produces a restart loop. The deployment's startup-clear wipes that file,
+so the restarted container returns healthy — which is exactly the observed
+`RESTARTS: 1` → `/readyz` 200 transition.
+
+Two things are worth separating here.
+
+**A model can produce a correct action while holding an incorrect model of the
+system.** The action and the reasoning are separate outputs, and validating one
+does not validate the other. A check that inspected only the action would have
+passed this diagnosis.
+
+**The confidence value is the model's estimate of how much to trust its own
+reasoning, not a vote on whether the action is correct.** A gate that trusted the
+action alone would have evicted. The gate that also weighted the model's
+self-assessment escalated — and in this instance that self-assessment was the more
+accurate of the two signals about the diagnosis's soundness.
+
+So the 0.78 is not a failed test. It is the gate discriminating between "the
+answer happens to be right" and "the model is sure the answer is right" — which is
+the distinction ADR-0003 asks it to draw, and the reason the threshold lives in
+the executor rather than in the prompt.
 
 ## 15. References
 

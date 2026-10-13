@@ -22,6 +22,52 @@ Operational procedures for the local self-healing demo. Companion to
 docker info >/dev/null && echo "docker ok" || echo "start Docker Desktop"
 ```
 
+### Running `minikube` and `kubectl` by hand
+
+Every script in `scripts/` sets these internally; a command typed manually does
+not, and it needs both prefixes or it will fail in a way that does not look like
+a failure:
+
+```bash
+MINIKUBE_HOME=$PWD/.minikube-home KUBECONFIG=$HOME/.kube/config \
+  minikube image ls -p selfhealing
+```
+
+**`MINIKUBE_HOME` is mandatory on this host, not a fallback.** `~/.minikube` is
+not writable here, and it holds a second, stale `selfhealing` profile record
+whose SSH key no longer authenticates. Point `minikube` at the default home and
+`minikube image build` prints nothing, **exits 0, and builds no image** — the
+SSH handshake error is logged below the command's exit-code contract. This is
+not theoretical: an agent image build was reported as successful, and the image
+did not exist. **Assert the outcome** (`minikube image ls | grep <tag>`) — exit
+code 0 is not evidence. `minikube ssh` and `minikube profile list` fail the same
+way, the latter reporting a blank status rather than an error.
+
+`scripts/lib/common.sh` derives both variables from a real write probe
+(`_is_writable`) and exports them before any `minikube` call, which is why the
+scripts work when a bare shell command does not. Note what that probe keys on: it
+tests whether the *default location is writable*, not whether it holds the
+working profile record. On this host those coincide. If `~/.minikube` ever became
+writable, the stale record would win silently — see design.md §14, finding 11.
+
+**Images are built into the node, not the host.** Minikube's `docker` driver
+builds into the *node's* containerd store, so `docker images` on the host will
+**not** list `selfhealing/demo-agent:dev`, and `demo-api` appears only via
+`minikube image ls`. That is expected, not a failed build: kubelet reads the same
+store, which is why the manifests use `imagePullPolicy: IfNotPresent`. To inspect
+a built image directly, run
+`minikube ssh -p selfhealing -- sudo crictl images | grep demo`.
+
+**The agent Service is a single point of failure.** `demo-agent` runs at
+`replicas: 1` — deliberately, so two concurrent webhooks cannot race the
+executor into more than one eviction — so the ClusterIP Service fronting it is
+single-replica too. If the pod is down, Alertmanager's webhook deliveries to
+`http://demo-agent.selfhealing.svc.cluster.local:8080/alert` fail; Alertmanager
+retries with backoff and eventually drops the notification rather than queueing
+it indefinitely. A missed webhook does not lose the incident, because the alert
+re-fires on `repeatInterval`, but it does mean a fault can go undiagnosed for
+longer than `groupWait` implies.
+
 ---
 
 ## 2. Bring the environment up
@@ -475,6 +521,71 @@ kubectl get servicemonitor -n selfhealing -o yaml | grep -A2 labels
 The chart values set `serviceMonitorSelectorNilUsesHelmValues: false` so that
 ServiceMonitors outside the release namespace are discovered; without it the
 `selfhealing` namespace is silently ignored.
+
+### Duplicate diagnoses in the agent log during the end-to-end test
+
+Alertmanager's default webhook timeout is 10s; a slow diagnosis (worst case
+~123s) returns as a timeout, and Alertmanager redelivers. The retry finds the pod
+already evicted and reports "already healed". This is expected and safe — no
+double eviction occurs, but the LLM is called twice. Fix candidates: raise the
+Alertmanager webhook timeout, or add in-flight dedup keyed on the alert
+fingerprint. Not fixed in v1.
+
+### Alertmanager has two config secrets and only one is live
+
+The StatefulSet mounts
+`alertmanager-kube-prometheus-stack-alertmanager-generated` (gzipped, key
+`alertmanager.yaml.gz`), which is the config the Operator actually renders and
+reloads — `config-reloader` watches the file and POSTs to `/-/reload`. The
+sibling secret `alertmanager-kube-prometheus-stack-alertmanager` is a plaintext
+leftover from an earlier version and is not mounted by anything. When inspecting
+the live config, read the `-generated` secret and gunzip `alertmanager.yaml.gz`;
+the plaintext one will mislead you into thinking an `AlertmanagerConfig` merge
+failed:
+
+```bash
+kubectl get secret alertmanager-kube-prometheus-stack-alertmanager-generated \
+  -n monitoring -o jsonpath='{.data.alertmanager\.yaml\.gz}' | base64 -d | gunzip
+```
+
+The rendered config the running process reads is at
+`/etc/alertmanager/config_out/alertmanager.env.yaml` inside the pod.
+
+### `kubectl run` with a throwaway pod is rejected by the namespace's restricted PSA
+
+`selfhealing` sets `pod-security.kubernetes.io/enforce: restricted`, so a bare
+`kubectl run` cannot be admitted — the pod fails admission with
+`violates PodSecurity "restricted:latest"` (`allowPrivilegeEscalation != false`,
+`runAsNonRoot != true`, `seccompProfile`, unrestricted capabilities). To test
+in-cluster connectivity, either `kubectl exec` into an existing pod, or create
+the probe in a namespace without restricted enforcement — `default` has no PSA
+labels and admits it:
+
+```bash
+kubectl run psa-probe --rm -i --restart=Never --image=curlimages/curl \
+  -n default -- curl -s -o /dev/null -w "%{http_code}" \
+  http://demo-agent.selfhealing.svc.cluster.local:8080/healthz
+```
+
+### `kubectl port-forward pod/<name> 8081:80` succeeds but forwards to nothing
+
+The demo-api pod exposes `http=8080/TCP`. The Service maps `port: 80 →
+targetPort: http`, but that mapping exists only at the Service layer. Forwarding
+directly to the pod must target the container port:
+
+```bash
+kubectl port-forward -n selfhealing pod/$TARGET 8081:8080
+```
+
+The wrong form (`8081:80`) prints `Forwarding from 127.0.0.1:8081 -> 80` with
+no error, and the subsequent request fails with curl exit 52 (empty reply), not
+connection-refused. The forwarder is happy; the port it forwards to has nothing
+listening.
+
+Note: `kubectl port-forward -n selfhealing svc/demo-agent 8080:8080` (the agent
+Service) is correct as written — the agent's Service and container ports are
+both 8080. The confusion only applies when forwarding to a demo-api pod
+directly.
 
 ---
 
