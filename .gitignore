@@ -85,3 +85,7 @@ floci-snapshot*.json
 .env
 .env.*
 node_modules/
+
+# Internal handoff documents — not part of the public repo
+HANDOFF.md
+HANDOFF-2.md

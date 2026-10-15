@@ -343,10 +343,10 @@ _run_bounded() {
       exec 9<>"${fifo}"
 
       if [[ -n "${SMOKE_TIMEOUT_BIN}" ]]; then
-        "${SMOKE_TIMEOUT_BIN}" "${limit}" "${runner[@]}" <"${fifo}" >"${out}" 2>&1
+        "${SMOKE_TIMEOUT_BIN}" "${limit}" "${runner[@]+"${runner[@]}"}" <"${fifo}" >"${out}" 2>&1
         rc=$?
       else
-        "${runner[@]}" <"${fifo}" >"${out}" 2>&1 &
+        "${runner[@]+"${runner[@]}"}" <"${fifo}" >"${out}" 2>&1 &
         local pid=$!
         local deadline=$((SECONDS + limit))
         while kill -0 "${pid}" 2>/dev/null; do
@@ -367,7 +367,7 @@ _run_bounded() {
       ;;
     *)
       if [[ -n "${SMOKE_TIMEOUT_BIN}" ]]; then
-        "${SMOKE_TIMEOUT_BIN}" "${limit}" "${runner[@]}" </dev/null >"${out}" 2>&1
+        "${SMOKE_TIMEOUT_BIN}" "${limit}" "${runner[@]+"${runner[@]}"}" </dev/null >"${out}" 2>&1
         rc=$?
       else
         "$@" </dev/null >"${out}" 2>&1 &
@@ -471,7 +471,7 @@ run_case() {
   FAILURES=$((FAILURES + 1))
   printf '  %s%-28s%s FAIL\n' "$_C_RED" "${label}" "$_C_RESET"
   local p
-  for p in "${problems[@]}"; do
+  for p in "${problems[@]+"${problems[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${p}" "$_C_RESET"
   done
   printf '      %s--- output ---%s\n' "$_C_DIM" "$_C_RESET"
@@ -613,7 +613,7 @@ else
   # function" - the reporter failed before it could report. Reproduced by the
   # `make validate` run that first caught this.
   cp_msg=""
-  for cp_msg in "${CONTROL_PROBLEMS[@]}"; do
+  for cp_msg in "${CONTROL_PROBLEMS[@]+"${CONTROL_PROBLEMS[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${cp_msg}" "$_C_RESET"
   done
   printf '      %s--- output ---%s\n' "$_C_DIM" "$_C_RESET"
@@ -732,7 +732,7 @@ if (( ${#guard_problems[@]} == 0 )); then
     "$_C_GREEN" "guard: ordering in cpu-load" "$_C_RESET" "${line_baseline}" "${line_start}"
 else
   printf '  %s%-30s%s FAIL\n' "$_C_RED" "guard: ordering in cpu-load" "$_C_RESET"
-  for local_gp in "${guard_problems[@]}"; do
+  for local_gp in "${guard_problems[@]+"${guard_problems[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${local_gp}" "$_C_RESET"
   done
   GUARD_FAILURES=$((GUARD_FAILURES + 1))
@@ -781,7 +781,7 @@ if (( ${#settle_problems[@]} == 0 )); then
   printf '  %s%-30s%s ok (completion needs maxReplicas or in-band utilisation)\n' "$_C_GREEN" "guard: settle is not desired==" "$_C_RESET"
 else
   printf '  %s%-30s%s FAIL\n' "$_C_RED" "guard: settle is not desired==" "$_C_RESET"
-  for local_sp in "${settle_problems[@]}"; do
+  for local_sp in "${settle_problems[@]+"${settle_problems[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${local_sp}" "$_C_RESET"
   done
   GUARD_FAILURES=$((GUARD_FAILURES + 1))
@@ -824,7 +824,7 @@ if (( ${#reset_problems[@]} == 0 )); then
     "$_C_GREEN" "guard: owns its baseline" "$_C_RESET" "${baseline_line}"
 else
   printf '  %s%-30s%s FAIL\n' "$_C_RED" "guard: owns its baseline" "$_C_RESET"
-  for local_rp in "${reset_problems[@]}"; do
+  for local_rp in "${reset_problems[@]+"${reset_problems[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${local_rp}" "$_C_RESET"
   done
   GUARD_FAILURES=$((GUARD_FAILURES + 1))
@@ -916,7 +916,7 @@ if (( ${#baseline_problems[@]} == 0 )); then
     "$_C_GREEN" "guard: baselines are sampled" "$_C_RESET"
 else
   printf '  %s%-30s%s FAIL\n' "$_C_RED" "guard: baselines are sampled" "$_C_RESET"
-  for baseline_msg in "${baseline_problems[@]}"; do
+  for baseline_msg in "${baseline_problems[@]+"${baseline_problems[@]}"}"; do
     printf '      %s- %s%s\n' "$_C_RED" "${baseline_msg}" "$_C_RESET"
   done
   FAILURES=$((FAILURES + 1))

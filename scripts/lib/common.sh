@@ -288,22 +288,22 @@ apply_manifest() {
   local name; name="$(basename "${manifest}")"
   local out
 
-  if out="$(kubectl apply --dry-run=server -f "${manifest}" "${extra[@]}" 2>&1)"; then
-    kubectl apply -f "${manifest}" "${extra[@]}"
+  if out="$(kubectl apply --dry-run=server -f "${manifest}" "${extra[@]+"${extra[@]+"${extra[@]}"}"}" 2>&1)"; then
+    kubectl apply -f "${manifest}" "${extra[@]+"${extra[@]+"${extra[@]}"}"}"
     return 0
   fi
 
   # Dry-run failed. Decide whether it is our problem or the environment's.
   if grep -qE 'connection refused|failed to download openapi|Unable to connect to the server|couldn.t get current server API group list' <<<"${out}"; then
     warn "server-side dry-run unavailable (API server unreachable); applying ${name} without it"
-    kubectl apply -f "${manifest}" "${extra[@]}"
+    kubectl apply -f "${manifest}" "${extra[@]+"${extra[@]+"${extra[@]}"}"}"
     return 0
   fi
 
   if grep -qE 'no matches for kind|unable to recognize' <<<"${out}"; then
     warn "CRD not installed; applying ${name} without server-side dry-run"
     detail "install the operator that provides this kind, or omit this manifest"
-    kubectl apply -f "${manifest}" "${extra[@]}"
+    kubectl apply -f "${manifest}" "${extra[@]+"${extra[@]+"${extra[@]}"}"}"
     return 0
   fi
 
@@ -325,8 +325,8 @@ safe_delete() {
   local nsargs=()
   [[ -n "${ns}" ]] && nsargs=(-n "${ns}")
 
-  if kubectl delete "${kind}" "${name}" "${nsargs[@]}" --dry-run=server >/dev/null 2>&1; then
-    kubectl delete "${kind}" "${name}" "${nsargs[@]}"
+  if kubectl delete "${kind}" "${name}" "${nsargs[@]+"${nsargs[@]}"}" --dry-run=server >/dev/null 2>&1; then
+    kubectl delete "${kind}" "${name}" "${nsargs[@]+"${nsargs[@]}"}"
     return 0
   fi
 

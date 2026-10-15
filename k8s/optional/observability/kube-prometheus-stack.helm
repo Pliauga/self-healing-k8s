@@ -43,6 +43,7 @@ prometheus:
               storage: 2Gi
 
 grafana:
+  enabled: false
   # Default credentials are admin / prom-operator. Change before exposing.
   # For local access: kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
   resources:
